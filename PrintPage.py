@@ -51,6 +51,7 @@ class printPdfWorker(QObject):
         self.printname = self.win.printName
         self.dpi = int(str(self.win.dpi)[:3])
         self.orientation = self.win.dirtion()
+        self.zoom = self.win.adjusted
         self.pdf_files = []
         ali = self.win.ali
         if "水平居中" in ali:
@@ -72,12 +73,24 @@ class printPdfWorker(QObject):
         if 'Adobe PDF' in self.printname or 'Microsoft Print to PDF' in self.printname:
             try:
                 file_path = self.win.savefile
-                self._printer.setOutputFileName(file_path)
+                if file_path:
+                    self._printer.setOutputFileName(file_path)
             except:
                 pass
         self.setprinton()
         
-
+    def setrect(self):
+        # 获取页面的物理尺寸
+        page_rect = self._printer.pageRect(QPrinter.DevicePixel)                       
+        # 计算页面矩形大小的 97%    
+        new_width = int(page_rect.width() * self.zoom)
+        new_height = int(page_rect.height() * self.zoom)
+        # 计算新的矩形的位置，使其居中
+        new_x = (page_rect.width() - new_width) // 2
+        new_y = (page_rect.height() - new_height) // 2
+        # 创建新的矩形
+        new_rect = QRect(new_x, new_y, new_width, new_height)
+        return new_rect
 
     def setprinton(self):
         if "A4" in self.paper:
@@ -92,9 +105,9 @@ class printPdfWorker(QObject):
                 custom_size = QPageSize(QSizeF(width, height), QPageSize.Unit.Millimeter, self.paper, QPageSize.ExactMatch)       
                 # 设置打印机的页面尺寸
                 self._printer.setPageSize(custom_size)
-                 # 关键：禁用系统级纸张匹配 (Qt 5.12+)
-                self._printer.setPageLayout(QPageLayout(custom_size, QPageLayout.Portrait, QMarginsF(0, 0, 0, 0), QPageLayout.Millimeter))
-                self._printer.pageLayout().setMode(QPageLayout.FullPageMode)  # 禁用驱动裁剪
+                #  # 关键：禁用系统级纸张匹配 (Qt 5.12+)
+                # self._printer.setPageLayout(QPageLayout(custom_size, QPageLayout.Portrait, QMarginsF(0, 0, 0, 0), QPageLayout.Millimeter))
+                # self._printer.pageLayout().setMode(QPageLayout.FullPageMode)  # 禁用驱动裁剪
                  # 计算自定义纸张的像素尺寸
                 self.height_dpx, self.width_dpx = self.a4_size(self.dpi, width, height)
 
@@ -162,16 +175,13 @@ class printPdfWorker(QObject):
 
             else:
                 if self.win.mergebox.isChecked():
-                    # 获取打印设备的页面尺寸
-                    # page_rect = self._printer.pageRect(QPrinter.DevicePixel)  # 这将返回页面的物理尺寸
-                    # print(page_rect)
+                    # 创建一个 QPainter 对象
                     painter = QPainter(self._printer)
                     painter.setRenderHint(QPainter.Antialiasing)
-                    # page_rect = page_rect.toRect()  # 转换为QRect对象
-                    # painter.setViewport(page_rect)
+                    new_rect = self.setrect()                       
+                    # 设置视口为新的矩形
+                    painter.setViewport(new_rect)                        
                     rect = painter.viewport()
-                    # rect = painter.viewport()
-                    # print(rect)
 
                     images = self.add_image(self.paths)
                     for pil_image, pageNumber in zip(images, count(1)):
@@ -180,15 +190,18 @@ class printPdfWorker(QObject):
                             self._printer.newPage() # 通知打印机准备一个新的空白页面
                         self.print_image(pil_image, rect, painter)
 
-
                     # 清理
                     painter.end()
 
                 else:
 
                     for index, path in enumerate(self.paths):
+                        # 创建一个 QPainter 对象
                         painter = QPainter(self._printer)
-                        # painter.setViewport(QRect(0, 0, self.width_dpx, self.height_dpx))
+                        painter.setRenderHint(QPainter.Antialiasing)
+                        new_rect = self.setrect()                       
+                        # 设置视口为新的矩形
+                        painter.setViewport(new_rect)                        
                         rect = painter.viewport()
                         images = []
                         path = Path(path)
@@ -311,11 +324,11 @@ class printPdfWorker(QObject):
             scaledHeight = int(pilHeight * scale)
             if A4Ratio < 1:
                 # 计算偏移量
-                xOffset = int((rect.width() - scaledWidth) / self.inter_x)
-                yOffset = int((rect.height() - scaledHeight) / 2)
+                xOffset = int((rect.width() - scaledWidth) / self.inter_x)+rect.left()
+                yOffset = int((rect.height() - scaledHeight) / 2)+rect.top()
             else:
-                xOffset = int((rect.width() - scaledWidth) / 2)
-                yOffset = int((rect.height() - scaledHeight) / self.inter_x)
+                xOffset = int((rect.width() - scaledWidth) / 2)+rect.left()
+                yOffset = int((rect.height() - scaledHeight) / self.inter_x)+rect.top()
         else:
             # 计算缩放比例
             scale = min(rect.width() / pilWidth, rect.height() / pilHeight)
@@ -358,9 +371,8 @@ class printPdfWorker(QObject):
             imageRatio = pilHeight / pilWidth
             if imageRatio > 1:
                 image = image.transpose(Image.ROTATE_90)
-            zoom = 0.97
-            width = int(cell_width*zoom)
-            height = int(cell_height*zoom)
+            width = int(cell_width*self.zoom)
+            height = int(cell_height*self.zoom)
             # 调整图片大小
             processed_image = self.resize_image(image, width, height)
             processed_images.append(processed_image)
@@ -402,9 +414,9 @@ class printPdfWorker(QObject):
             imageRatio = pilHeight / pilWidth
             if imageRatio > 1:
                 image = image.transpose(Image.ROTATE_90)
-            zoom = 0.97
-            width = int(cell_width*zoom)
-            height = int(cell_height*zoom)
+
+            width = int(cell_width*self.zoom)
+            height = int(cell_height*self.zoom)
             # 调整图片大小
             processed_image = self.resize_image(image, width, height)
             processed_images.append(processed_image)
@@ -450,9 +462,9 @@ class printPdfWorker(QObject):
             imageRatio = pilHeight / pilWidth
             if imageRatio < 1:
                 image = image.transpose(Image.ROTATE_270)
-            zoom = 0.97
-            width = int(cell_width*zoom)
-            height = int(cell_height*zoom)
+
+            width = int(cell_width*self.zoom)
+            height = int(cell_height*self.zoom)
             # 调整图片大小
             processed_image = self.resize_image(image, width, height)
             processed_images.append(processed_image)
@@ -500,9 +512,9 @@ class printPdfWorker(QObject):
             imageRatio = pilHeight / pilWidth
             if imageRatio > 1:
                 image = image.transpose(Image.ROTATE_90)
-            zoom = 0.97
-            width = int(cell_width*zoom)
-            height = int(cell_height*zoom)
+
+            width = int(cell_width*self.zoom)
+            height = int(cell_height*self.zoom)
             # 调整图片大小
             processed_image = self.resize_image(image, width, height)
             processed_images.append(processed_image)
@@ -564,7 +576,7 @@ class printPdfWorker(QObject):
 
 
 class Window(QWidget):
-    def __init__(self):
+    def __init__(self, file_path=None):
         super(Window, self).__init__()
         self.ui = Ui_PrintForm()
         self.ui_win = self.windowFlags()
@@ -598,6 +610,7 @@ class Window(QWidget):
         self.line = self.ui.checkBox_3
         self.repeat = self.ui.checkBox_4
         self.printbox = self.ui.comboBox_5
+        self.horizontalSlider = self.ui.horizontalSlider
         self.load_printers()
         self.small_win = self.ui.dockWidget
         self.small_win.hide()
@@ -608,6 +621,8 @@ class Window(QWidget):
         self.load_config()
         self.setdirection()
         self.file_path = []
+        if file_path:
+            self.lianjie(file_path)
         # 安装事件过滤器
         self.listwidget.viewport().installEventFilter(self)
         self.listwidget.keyPressEvent = self.on_key_press  # 绑定键盘事件处理函数
@@ -685,6 +700,7 @@ class Window(QWidget):
         for item in ast.literal_eval(last_three_items):
             self.paper_box.addItem(item)
         self.paper_box.setCurrentIndex(int(config.get('Print', 'Paper', fallback=0)))
+        self.horizontalSlider.setValue(int(config.get('Print', 'Adjusted', fallback=97)))
 
     def doublePrint(self):
         double = self.double_box.currentIndex()
@@ -762,6 +778,10 @@ class Window(QWidget):
         self.ali = self.alignment.currentText()
         self.double = self.doublePrint()
         self.printName = self.printbox.currentText()
+        # 获取滑块的值
+        slider_value = self.horizontalSlider.value()
+        # 将值转换为小数形式（假设你希望将97变为0.97）
+        self.adjusted = slider_value / 100
         self.runBar('正在发送页面到打印机\n请勿关闭程序...','red')
 
     def rundio(self):
@@ -798,6 +818,9 @@ class Window(QWidget):
         self.printdata()
         if 'Adobe PDF' in self.printName or 'Microsoft Print to PDF' in self.printName:
             self.savefile = QFileDialog.getSaveFileName(self, "保存PDF文件", "document.pdf", "PDF Files (*.pdf)")[0]
+            if not self.savefile:
+                self.runBar('已取消打印','blue')
+                return
         # 第2步：创建一个QThread对象
         self.thread = QThread()
         # 第3步：创建一个工作对象
@@ -890,6 +913,7 @@ class Window(QWidget):
         mergebox = int(self.mergebox.checkState() == Qt.CheckState.Checked)
         line = int(self.line.checkState() == Qt.CheckState.Checked)
         repeat = int(self.repeat.checkState() == Qt.CheckState.Checked)
+        adjusted = self.horizontalSlider.value()
         lastoption = []
         item_count = self.paper_box.count()
         if item_count > self.paper_box.maxCount()-3:
@@ -908,6 +932,7 @@ class Window(QWidget):
                            'Line': str(line),
                            'Repeat': str(repeat),
                            'LastThreeItems': lastoption,
+                           'Adjusted':adjusted,
                            }
 
         # 将更新后的配置写回到文件
